@@ -108,3 +108,6 @@ dist
 
 # Transpiled entry point
 index.js
+
+# package-lock.json
+package-lock.json
