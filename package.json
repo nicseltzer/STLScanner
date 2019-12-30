@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "tsc ./index.ts && node index.js",
+    "build": "tsc ./index.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
@@ -12,11 +13,13 @@
   "devDependencies": {
     "@types/cheerio": "^0.22.15",
     "@types/node": "^13.1.1",
-    "@types/nodemailer": "^6.4.0"
+    "@types/nodemailer": "^6.4.0",
+    "@types/winston": "^2.4.4"
   },
   "dependencies": {
     "cheerio": "^1.0.0-rc.3",
     "nodemailer": "^6.4.2",
-    "typed-rest-client": "^1.7.1"
+    "typed-rest-client": "^1.7.1",
+    "winston": "^3.2.1"
   }
 }

@@ -8,8 +8,25 @@ https://blog.bitsrc.io/https-blog-bitsrc-io-how-to-perform-web-scraping-using-no
 import * as cheerio from "cheerio";
 import * as httpm from "typed-rest-client/HttpClient";
 import * as nodemailer from "nodemailer";
+import * as winston from "winston";
 
 import { IRequestOptions } from "typed-rest-client/Interfaces";
+import { format } from "logform";
+
+const loggerFileOptions: winston.transports.FileTransportOptions = {
+	level: "debug",
+	filename: `${__dirname}/last.log`,
+	maxsize: 5242880, // 5MB
+	maxFiles: 5,
+	format: format.combine(
+		format.timestamp(),
+		format.printf(info => `${info.timestamp} ${info.level}: ${info.message}`)
+	)
+};
+
+const logger = winston.createLogger({
+	transports: [new winston.transports.File(loggerFileOptions)]
+});
 
 interface IDateTime {
 	year: string;
@@ -35,13 +52,17 @@ const timeMatcher = new RegExp(
 );
 // END FUCK REGEX
 
+const ENDPOINT = "https://slmpd.org/cfs.aspx";
+
 const FILTERED_EVENTS = [
 	"shotspotter", // automated system
 	"person down",
 	"shots fired",
 	"fireworks",
 	"assault",
-	"fight"
+	"fight",
+	"call for police",
+	"working fire/arson"
 ];
 
 const FILTERED_STREETS = [
@@ -81,68 +102,64 @@ export class StlScanner {
 			undefined,
 			this.options
 		);
-		const response: httpm.HttpClientResponse = await httpClient.get(
-			"https://slmpd.org/cfs.aspx"
-		);
-		response
-			.readBody()
-			.then(data => {
-				const $ = cheerio.load(data);
-				const rawUpdatedAt: string = $("span#lblLastUpdate").text();
-				const updatedAt: Date = this.getUpdatedAtMillis(rawUpdatedAt);
-				const callsForService: ICallForService[] = [];
-				const rawTableData: string[] = [];
-				$("table#gvData tbody tr td").each((idx, element) => {
-					rawTableData.push($(element).text());
+		const response: httpm.HttpClientResponse = await httpClient.get(ENDPOINT);
+		response.readBody().then(data => {
+			const $ = cheerio.load(data);
+			const rawUpdatedAt: string = $("span#lblLastUpdate").text();
+			const updatedAt: Date = this.getUpdatedAtMillis(rawUpdatedAt);
+			const callsForService: ICallForService[] = [];
+			const rawTableData: string[] = [];
+			$("table#gvData tbody tr td").each((idx, element) => {
+				rawTableData.push($(element).text());
+			});
+
+			for (let i = 0; i + 4 < rawTableData.length; i = i + 4) {
+				callsForService.push({
+					timestamp: new Date(rawTableData[i]).getTime(),
+					id: rawTableData[i + 1],
+					address: rawTableData[i + 2],
+					detail: rawTableData[i + 3]
+				});
+			}
+
+			logger.debug(JSON.stringify(callsForService));
+
+			const filteredEvents = callsForService.filter(
+				event =>
+					FILTERED_EVENTS.includes(event.detail.toLowerCase()) &&
+					FILTERED_STREETS.includes(event.address.toLocaleLowerCase())
+			);
+
+			logger.info(`Last update at ${updatedAt}`);
+			logger.info(`Fetched ${callsForService.length} events from ${ENDPOINT}`);
+			logger.info(
+				`Filtered out ${callsForService.length - filteredEvents.length} events`
+			);
+
+			const mailOptions = {
+				from: "StlScanner <nic@nicseltzer.com>",
+				to: "nicseltzer@gmail.com",
+				subject: `StlScanner for ${updatedAt.getTime()}`,
+				html: JSON.stringify(filteredEvents)
+			};
+
+			if (filteredEvents.length > 0) {
+				const mailTransport = nodemailer.createTransport({
+					service: "gmail",
+					auth: {
+						user: "nicseltzer@gmail.com",
+						pass: "dwzkclckdyqorkik"
+					}
 				});
 
-				for (let i = 0; i + 4 < rawTableData.length; i = i + 4) {
-					callsForService.push({
-						timestamp: new Date(rawTableData[i]).getTime(),
-						id: rawTableData[i + 1],
-						address: rawTableData[i + 2],
-						detail: rawTableData[i + 3]
-					});
-				}
+				mailTransport.sendMail(mailOptions, (err, data) => {
+					if (err) logger.error(err);
+					else logger.info(data);
+				});
 
-				const filteredEvents = callsForService.filter(
-					event =>
-						FILTERED_EVENTS.includes(event.detail.toLowerCase()) &&
-						FILTERED_STREETS.includes(event.address.toLocaleLowerCase())
-				);
-
-				console.log(`Last update at ${updatedAt}`);
-				console.log(`Fetched ${callsForService.length} events`);
-				console.log(
-					`Filtered out ${callsForService.length -
-						filteredEvents.length} events`
-				);
-
-				const mailOptions = {
-					from: "StlScanner <nic@nicseltzer.com>",
-					to: "nicseltzer@gmail.com",
-					subject: `StlScanner for ${updatedAt.getTime()}`,
-					html: JSON.stringify(filteredEvents)
-				};
-
-				if (filteredEvents.length > 0) {
-					const mailTransport = nodemailer.createTransport({
-						service: "gmail",
-						auth: {
-							user: "nicseltzer@gmail.com",
-							pass: "dwzkclckdyqorkik"
-						}
-					});
-
-					mailTransport.sendMail(mailOptions, (err, info) => {
-						if (err) console.log(err);
-						else console.log(info);
-					});
-
-					console.log(`sent ${filteredEvents.length}: ${filteredEvents}`);
-				}
-			})
-			.catch(err => console.log(err));
+				logger.info(`sent ${filteredEvents.length}: ${filteredEvents}`);
+			}
+		});
 	}
 
 	private getUpdatedAtMillis(updatedAt: string): Date {

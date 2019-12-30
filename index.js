@@ -44,10 +44,23 @@ exports.__esModule = true;
 var cheerio = require("cheerio");
 var httpm = require("typed-rest-client/HttpClient");
 var nodemailer = require("nodemailer");
+var winston = require("winston");
+var logform_1 = require("logform");
+var loggerFileOptions = {
+    level: "debug",
+    filename: __dirname + "/last.log",
+    maxsize: 5242880,
+    maxFiles: 5,
+    format: logform_1.format.combine(logform_1.format.timestamp(), logform_1.format.printf(function (info) { return info.timestamp + " " + info.level + ": " + info.message; }))
+};
+var logger = winston.createLogger({
+    transports: [new winston.transports.File(loggerFileOptions)]
+});
 // FUCK REGEX
 var dateMatcher = new RegExp("([0-9]{1,2})/([0-9]{1,2})/([0-9]{4})");
 var timeMatcher = new RegExp("(0[0-9]|1[0-9]|2[0-3]|[0-9]):([0-5][0-9]):([0-5][0-9]) ([AP]M)");
 // END FUCK REGEX
+var ENDPOINT = "https://slmpd.org/cfs.aspx";
 var FILTERED_EVENTS = [
     "shotspotter",
     "person down",
@@ -94,12 +107,10 @@ var StlScanner = /** @class */ (function () {
                 switch (_a.label) {
                     case 0:
                         httpClient = new httpm.HttpClient(this.userAgent, undefined, this.options);
-                        return [4 /*yield*/, httpClient.get("https://slmpd.org/cfs.aspx")];
+                        return [4 /*yield*/, httpClient.get(ENDPOINT)];
                     case 1:
                         response = _a.sent();
-                        response
-                            .readBody()
-                            .then(function (data) {
+                        response.readBody().then(function (data) {
                             var $ = cheerio.load(data);
                             var rawUpdatedAt = $("span#lblLastUpdate").text();
                             var updatedAt = _this.getUpdatedAtMillis(rawUpdatedAt);
@@ -116,14 +127,14 @@ var StlScanner = /** @class */ (function () {
                                     detail: rawTableData[i + 3]
                                 });
                             }
+                            logger.debug(JSON.stringify(callsForService));
                             var filteredEvents = callsForService.filter(function (event) {
                                 return FILTERED_EVENTS.includes(event.detail.toLowerCase()) &&
                                     FILTERED_STREETS.includes(event.address.toLocaleLowerCase());
                             });
-                            console.log("Last update at " + updatedAt);
-                            console.log("Fetched " + callsForService.length + " events");
-                            console.log("Filtered out " + (callsForService.length -
-                                filteredEvents.length) + " events");
+                            logger.info("Last update at " + updatedAt);
+                            logger.info("Fetched " + callsForService.length + " events from " + ENDPOINT);
+                            logger.info("Filtered out " + (callsForService.length - filteredEvents.length) + " events");
                             var mailOptions = {
                                 from: "StlScanner <nic@nicseltzer.com>",
                                 to: "nicseltzer@gmail.com",
@@ -138,15 +149,15 @@ var StlScanner = /** @class */ (function () {
                                         pass: "dwzkclckdyqorkik"
                                     }
                                 });
-                                mailTransport.sendMail(mailOptions, function (err, info) {
+                                mailTransport.sendMail(mailOptions, function (err, data) {
                                     if (err)
-                                        console.log(err);
+                                        logger.error(err);
                                     else
-                                        console.log(info);
+                                        logger.info(data);
                                 });
-                                console.log("sent " + filteredEvents.length + ": " + filteredEvents);
+                                logger.info("sent " + filteredEvents.length + ": " + filteredEvents);
                             }
-                        })["catch"](function (err) { return console.log(err); });
+                        });
                         return [2 /*return*/];
                 }
             });
